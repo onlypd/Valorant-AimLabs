@@ -345,12 +345,17 @@
             <button class="btn btn-secondary" style="margin-left: 10px; padding: 5px 15px; min-width: auto;" onclick="openCrosshairMenu()">CHANGE CROSSHAIR</button>
         </div>
         
-        <p style="color:#6b7280; font-size: 0.8rem; margin-top:10px;">WASD: Move/Strafe • Space: Jump • Click: Shoot</p>
+        <p style="color:#6b7280; font-size: 0.8rem; margin-top:10px;">WASD: Move/Strafe • Space: Jump • Click: Shoot • Numpad 9: Aimbot</p>
 
         <div class="scenario-grid">
             <div class="card" onclick="game.start('gridshot')">
                 <h3>GRIDSHOT</h3>
                 <p>Speed. 3 Targets. Tap rapidly.</p>
+            </div>
+            <div class="card" onclick="game.start('gridshot_endless')">
+                <h3>GRIDSHOT (ENDLESS)</h3>
+                <span class="tag">NEW</span>
+                <p>No timer. Practice as long as you want.</p>
             </div>
             <div class="card" onclick="game.start('spidershot')">
                 <h3>SPIDERSHOT</h3>
@@ -639,6 +644,20 @@
                 gain.connect(this.ctx.destination);
                 osc.start();
                 osc.stop(this.ctx.currentTime + 0.05);
+            },
+            playBeep: function(isOn) {
+                if (this.ctx.state === 'suspended') this.ctx.resume();
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sine';
+                // High pitch for ON, Low for OFF
+                osc.frequency.setValueAtTime(isOn ? 880 : 440, this.ctx.currentTime);
+                gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.1);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.1);
             }
         };
 
@@ -669,6 +688,8 @@
                 this.state = 'MENU';
                 this.container = document.getElementById('game-container');
                 
+                this.aimbotEnabled = false;
+
                 this.player = {
                     pos: new THREE.Vector3(0, PHYS.PLAYER_HEIGHT, 0),
                     vel: new THREE.Vector3(0, 0, 0),
@@ -900,6 +921,10 @@
                     if (e.code === 'KeyA') this.player.input.a = true;
                     if (e.code === 'KeyD') this.player.input.d = true;
                     if (e.code === 'Space') this.player.input.space = true;
+                    if (e.code === 'Numpad9') {
+                        this.aimbotEnabled = !this.aimbotEnabled;
+                        AudioSys.playBeep(this.aimbotEnabled);
+                    }
                     if (e.code === 'Escape') {
                         document.exitPointerLock();
                         if (this.state === 'PLAYING') this.endGame();
@@ -1036,7 +1061,7 @@
                 this.removeTarget(target);
                 this.targetHistory.push(Date.now() - target.spawnTime);
 
-                if (this.mode === 'gridshot') this.spawnTarget();
+                if (this.mode.startsWith('gridshot')) this.spawnTarget();
                 else if (this.mode === 'spidershot') this.spawnTarget(!wasCenter); 
                 else if (this.mode === 'microshot') this.spawnTarget();
                 else if (this.mode === 'motionshot') this.spawnTarget();
@@ -1105,7 +1130,7 @@
                 let velocity = new THREE.Vector3(0,0,0);
                 const Z_DEPTH = -50;
 
-                if (this.mode === 'gridshot') {
+                if (this.mode.startsWith('gridshot')) {
                     const cols = [-15, 0, 15]; const rows = [0, 10, 20];
                     x = cols[Math.floor(Math.random()*3)]+(Math.random()*4-2);
                     y = rows[Math.floor(Math.random()*3)]+(Math.random()*4-2); r = 3.5;
@@ -1136,7 +1161,15 @@
                 this.scene.add(mesh); 
                 AudioSys.playSpawn();
 
-                this.targets.push({ mesh, spawnTime: Date.now(), isCenter, velocity, radius: r });
+                // Humanized Aimbot Offset: Random point slightly off-center
+                // This prevents perfect locking, simulating human error
+                const aimOffset = new THREE.Vector3(
+                    (Math.random() - 0.5) * (r * 0.5), // Random X offset within 50% of radius
+                    (Math.random() - 0.5) * (r * 0.5), // Random Y offset within 50% of radius
+                    0
+                );
+
+                this.targets.push({ mesh, spawnTime: Date.now(), isCenter, velocity, radius: r, aimOffset });
             }
 
             removeTarget(target) {
@@ -1161,7 +1194,7 @@
                 document.getElementById('main-menu').classList.add('hidden');
                 document.getElementById('end-screen').classList.add('hidden');
                 this.clearTargets();
-                if (mode === 'gridshot') for(let i=0; i<3; i++) this.spawnTarget();
+                if (mode.startsWith('gridshot')) for(let i=0; i<3; i++) this.spawnTarget();
                 else if (mode === 'spidershot') this.spawnTarget(true); 
                 else if (mode === 'strafetrack') { this.spawnTarget(); this.timer=30; }
                 else if (mode === 'microshot') for(let i=0; i<4; i++) this.spawnTarget();
@@ -1192,7 +1225,11 @@
 
             updateHUD() {
                 document.getElementById('hud-score').innerText = Math.floor(this.score).toString().padStart(4,'0');
-                document.getElementById('hud-time').innerText = Math.ceil(this.timer);
+                if (this.mode === 'gridshot_endless') {
+                    document.getElementById('hud-time').innerText = '∞';
+                } else {
+                    document.getElementById('hud-time').innerText = Math.ceil(this.timer);
+                }
                 const acc = this.shots>0?((this.hits/this.shots)*100).toFixed(0):100;
                 document.getElementById('hud-acc').innerText = acc+'%';
             }
@@ -1228,7 +1265,7 @@
                 // Ensures target count never hits 0 due to bugs
                 if (this.mode === 'spidershot') {
                     if (this.targets.length === 0) this.spawnTarget(true);
-                } else if (this.mode === 'gridshot') {
+                } else if (this.mode.startsWith('gridshot')) {
                     while (this.targets.length < 3) this.spawnTarget();
                 } else if (this.mode === 'microshot') {
                     while (this.targets.length < 4) this.spawnTarget();
@@ -1236,6 +1273,49 @@
                     while (this.targets.length < 3) this.spawnTarget();
                 } else if (this.mode === 'strafetrack') {
                     if (this.targets.length === 0) this.spawnTarget();
+                }
+            }
+
+            updateAimbot(dt) {
+                if (!this.aimbotEnabled || this.targets.length === 0) return;
+
+                // Find best target (closest angle to center of screen)
+                let bestTarget = null;
+                let bestAngle = Infinity;
+                const cameraDir = new THREE.Vector3();
+                this.camera.getWorldDirection(cameraDir);
+
+                this.targets.forEach(t => {
+                    const dirToTarget = t.mesh.position.clone().sub(this.camera.position).normalize();
+                    const angle = cameraDir.angleTo(dirToTarget);
+                    // Field of View check (approx 20 degrees)
+                    if (angle < 0.35 && angle < bestAngle) {
+                        bestAngle = angle;
+                        bestTarget = t;
+                    }
+                });
+
+                if (bestTarget) {
+                    // Aim at target position + the humanized offset
+                    const targetPos = bestTarget.mesh.position.clone().add(bestTarget.aimOffset);
+                    const dx = targetPos.x - this.camera.position.x;
+                    const dy = targetPos.y - this.camera.position.y;
+                    const dz = targetPos.z - this.camera.position.z;
+                    
+                    const yaw = Math.atan2(-dx, -dz);
+                    const dist = Math.sqrt(dx*dx + dz*dz);
+                    const pitch = Math.atan2(dy, dist);
+
+                    // Humanized Smoothing
+                    // Factor reduced from 25.0 to 8.0 for a "heavy drag" feel rather than instant snap
+                    const factor = 8.0 * dt;
+                    
+                    let deltaYaw = yaw - this.player.baseRotation.y;
+                    while (deltaYaw > Math.PI) deltaYaw -= Math.PI * 2;
+                    while (deltaYaw < -Math.PI) deltaYaw += Math.PI * 2;
+                    
+                    this.player.baseRotation.y += deltaYaw * factor;
+                    this.player.baseRotation.x += (pitch - this.player.baseRotation.x) * factor;
                 }
             }
 
@@ -1260,13 +1340,16 @@
 
                     // SAFETY NET CALL
                     this.maintainTargets();
+                    this.updateAimbot(dt);
 
                     this.updateWeapon(now, dt);
                     this.updatePhysics(dt);
                     this.updateTracers(now);
 
-                    this.timer -= dt;
-                    if (this.timer <= 0) { this.timer=0; this.endGame(); return; }
+                    if (this.mode !== 'gridshot_endless') {
+                        this.timer -= dt;
+                        if (this.timer <= 0) { this.timer=0; this.endGame(); return; }
+                    }
 
                     if (this.mode === 'strafetrack') this.updateTrackingMode(dt);
                     if (this.mode === 'motionshot') {
